@@ -1,0 +1,16 @@
+.*
+!.c8rc
+!.gitignore
+!.gitkeep
+!.helmignore
+!.prettierrc.json
+!.taprc
+build
+coverage
+log*
+node_modules
+package-lock.json
+*.ndjson
+*.ppk
+*.pub
+*.tsbuildinfo
