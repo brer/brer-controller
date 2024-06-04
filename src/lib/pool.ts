@@ -92,3 +92,33 @@ export async function writeInvocation(
     )
   }
 }
+
+export async function pushLogPage(
+  pool: Pool,
+  token: string,
+  invocationUlid: string,
+  invocationRev: string,
+  pageIndex: number,
+  pageContent: string | Buffer,
+): Promise<string> {
+  const response = await pool.request({
+    method: 'PUT',
+    path: `/api/v1/invocations/${invocationUlid}/log/${pageIndex}`,
+    headers: {
+      accept: '*/*',
+      authorization: `Bearer ${token}`,
+      'content-type': 'text/plain; charset=utf-8',
+      'if-match': invocationRev,
+    },
+    body: pageContent,
+  })
+
+  if (response.statusCode !== 204) {
+    await response.body.text()
+    throw new Error(
+      `Invocation ${invocationUlid} update returned status code ${response.statusCode}`,
+    )
+  }
+
+  return response.headers.etag + ''
+}

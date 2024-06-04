@@ -4,7 +4,7 @@ import type { Pool } from 'undici'
 
 import type { Invocation } from './invocation.js'
 import type { Kubernetes } from './kubernetes.js'
-import { readInvocation, writeInvocation } from './pool.js'
+import { pushLogPage, readInvocation, writeInvocation } from './pool.js'
 
 export interface App {
   kubernetes: Kubernetes
@@ -58,16 +58,18 @@ export async function reconcile(
 
   // Handle failures
   if (!isPodRunning(pod)) {
-    const reason = pod.metadata.deletionTimestamp
-      ? 'pod deletion'
-      : 'runtime failure'
+    // Save logs before closing the Invocation
+    const rev = await savePodLogs(app, invocation, token)
 
     // Use finalizing Pod to update Invocation first
-    log.debug({ invocationUlid }, reason)
+    log.debug({ invocationUlid }, 'handle runtime failure')
     const out = await writeInvocation(pool, token, {
       ...invocation,
+      _rev: rev,
       status: 'failed',
-      reason,
+      reason: pod.metadata.deletionTimestamp
+        ? 'pod deletion'
+        : 'runtime failure',
     })
 
     // ...and then completely purge the Pod
@@ -106,6 +108,43 @@ async function readPod(
       return Promise.reject(err)
     }
   }
+}
+
+async function savePodLogs(
+  { kubernetes, log, pool }: App,
+  invocation: Invocation,
+  token: string,
+) {
+  log.debug('download pod logs')
+  const response = await kubernetes.api.readNamespacedPodLog(
+    invocation.pod,
+    kubernetes.namespace,
+    'job',
+  )
+
+  const pageSize = 1024 * 1024 // 1 MiB (bytes)
+  const text = Buffer.from(response.body)
+
+  let index = 0
+  let offset = 0
+  let rev = invocation._rev
+
+  while (offset < text.byteLength) {
+    log.debug({ pageIndex: index }, 'push log page')
+    rev = await pushLogPage(
+      pool,
+      token,
+      invocation.ulid,
+      rev,
+      index,
+      text.subarray(offset, offset + pageSize),
+    )
+
+    index++
+    offset += pageSize
+  }
+
+  return rev
 }
 
 /**
